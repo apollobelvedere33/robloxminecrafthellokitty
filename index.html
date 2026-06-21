@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #000;
+  }
+  #viewport {
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+    position: relative;
+    touch-action: none;
+  }
+  #photo {
+    position: absolute;
+    top: 0;
+    left: 0;
+    max-width: none;
+    user-select: none;
+    -webkit-user-drag: none;
+    cursor: grab;
+  }
+  #photo:active {
+    cursor: grabbing;
+  }
+</style>
+</head>
+<body>
+
+<div id="viewport">
+  <img id="photo" src="photo.jpg" alt="">
+</div>
+
+<script>
+  const viewport = document.getElementById('viewport');
+  const photo = document.getElementById('photo');
+
+  // 1 = картинка целиком видна при открытии (без обрезки).
+  // Поставь больше 1, если хочешь, чтобы при открытии было приближение.
+  const INITIAL_ZOOM = 1.15;
+
+  let scale = 1;
+  let posX = 0;
+  let posY = 0;
+  let coverScale = 1; // минимальный масштаб, при котором картинка закрывает весь экран
+
+  let isDragging = false;
+  let startX = 0;
+  let startY = 0;
+
+  // для pinch-zoom двумя пальцами
+  let pinchStartDist = null;
+  let pinchStartScale = 1;
+  let pinchStartPosX = 0;
+  let pinchStartPosY = 0;
+  let pinchCenterX = 0;
+  let pinchCenterY = 0;
+
+  function init() {
+    const vw = viewport.clientWidth;
+    const vh = viewport.clientHeight;
+    const iw = photo.naturalWidth;
+    const ih = photo.naturalHeight;
+
+    coverScale = Math.max(vw / iw, vh / ih);
+    scale = coverScale * INITIAL_ZOOM;
+
+    // центрируем картинку при открытии
+    posX = (vw - iw * scale) / 2;
+    posY = (vh - ih * scale) / 2;
+
+    clampPosition();
+    updateTransform();
+  }
+
+  // если картинка уже закэширована браузером, событие "load" может не сработать —
+  // поэтому проверяем complete сразу, а onload оставляем как запасной вариант
+  if (photo.complete && photo.naturalWidth > 0) {
+    init();
+  } else {
+    photo.onload = init;
+  }
+
+  // пересчитываем под новый размер экрана при изменении окна
+  // или повороте телефона (портрет <-> ландшафт)
+  window.addEventListener('resize', init);
+  window.addEventListener('orientationchange', init);
+
+  function updateTransform() {
+    photo.style.transform = `translate(${posX}px, ${posY}px) scale(${scale})`;
+    photo.style.transformOrigin = '0 0';
+  }
+
+  function clampPosition() {
+    const vw = viewport.clientWidth;
+    const vh = viewport.clientHeight;
+    const scaledW = photo.naturalWidth * scale;
+    const scaledH = photo.naturalHeight * scale;
+
+    const minX = vw - scaledW;
+    const minY = vh - scaledH;
+
+    // если картинка меньше экрана (увеличена меньше coverScale) — центрируем,
+    // а не позволяем "оторваться" от края
+    posX = scaledW <= vw ? (vw - scaledW) / 2 : Math.min(0, Math.max(minX, posX));
+    posY = scaledH <= vh ? (vh - scaledH) / 2 : Math.min(0, Math.max(minY, posY));
+  }
+
+  // --- перетаскивание мышью ---
+  viewport.addEventListener('mousedown', (e) => {
+    isDragging = true;
+    startX = e.clientX - posX;
+    startY = e.clientY - posY;
+  });
+
+  window.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+    posX = e.clientX - startX;
+    posY = e.clientY - startY;
+    clampPosition();
+    updateTransform();
+  });
+
+  window.addEventListener('mouseup', () => {
+    isDragging = false;
+  });
+
+  // --- зум колесом мыши ---
+  viewport.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 1.1 : 0.9;
+    zoomAt(e.clientX, e.clientY, scale * delta);
+  }, { passive: false });
+
+  function zoomAt(clientX, clientY, newScale) {
+    const rect = viewport.getBoundingClientRect();
+    const mx = clientX - rect.left;
+    const my = clientY - rect.top;
+    const oldScale = scale;
+
+    // не даём уменьшить картинку меньше, чем "покрытие" экрана
+    scale = Math.max(coverScale * 0.9, newScale);
+
+    posX = mx - (mx - posX) * (scale / oldScale);
+    posY = my - (my - posY) * (scale / oldScale);
+
+    clampPosition();
+    updateTransform();
+  }
+
+  // --- тач: одним пальцем перетаскивание, двумя — зум ---
+  viewport.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 1) {
+      isDragging = true;
+      startX = e.touches[0].clientX - posX;
+      startY = e.touches[0].clientY - posY;
+    } else if (e.touches.length === 2) {
+      isDragging = false;
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      pinchStartDist = Math.hypot(dx, dy);
+      pinchStartScale = scale;
+      pinchStartPosX = posX;
+      pinchStartPosY = posY;
+      pinchCenterX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      pinchCenterY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    }
+  }, { passive: true });
+
+  viewport.addEventListener('touchmove', (e) => {
+    if (e.touches.length === 1 && isDragging) {
+      posX = e.touches[0].clientX - startX;
+      posY = e.touches[0].clientY - startY;
+      clampPosition();
+      updateTransform();
+    } else if (e.touches.length === 2 && pinchStartDist !== null) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.hypot(dx, dy);
+      const factor = dist / pinchStartDist;
+
+      const rect = viewport.getBoundingClientRect();
+      const mx = pinchCenterX - rect.left;
+      const my = pinchCenterY - rect.top;
+
+      const newScale = Math.max(coverScale * 0.9, pinchStartScale * factor);
+      posX = mx - (mx - pinchStartPosX) * (newScale / pinchStartScale);
+      posY = my - (my - pinchStartPosY) * (newScale / pinchStartScale);
+      scale = newScale;
+
+      clampPosition();
+      updateTransform();
+    }
+  }, { passive: true });
+
+  viewport.addEventListener('touchend', (e) => {
+    isDragging = false;
+    if (e.touches.length < 2) {
+      pinchStartDist = null;
+    }
+  });
+</script>
+
+</body>
+</html>
